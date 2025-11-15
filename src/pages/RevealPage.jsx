@@ -1,65 +1,117 @@
 import { useState } from 'react';
+import { supabase } from '../supabaseClient';
 
 const RevealPage = () => {
   const [userName, setUserName] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleNameSubmit = () => {
+  const handleNameSubmit = async () => {
     setError('');
+    setLoading(true);
 
-    // Load data from localStorage
-    const savedParticipants = localStorage.getItem('secretSantaParticipants');
-    const savedAssignments = localStorage.getItem('secretSantaAssignments');
+    try {
+      // Charger les participants
+      const { data: participants, error: participantsError } = await supabase
+        .from('participants')
+        .select('*');
 
-    if (!savedParticipants || !savedAssignments) {
-      setError('Le tirage n\'a pas encore été effectué. Contacte l\'admin !');
-      return;
+      if (participantsError) throw participantsError;
+
+      // Charger les assignations
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('assignments')
+        .select('*');
+
+      if (assignmentsError) throw assignmentsError;
+
+      if (!participants || participants.length === 0 || !assignments || assignments.length === 0) {
+        setError('Le tirage n\'a pas encore été effectué. Contacte l\'admin !');
+        setLoading(false);
+        return;
+      }
+
+      // Trouver l'utilisateur par nom (insensible à la casse)
+      const user = participants.find(
+        p => p.name.toLowerCase().trim() === userName.toLowerCase().trim()
+      );
+
+      if (!user) {
+        setError('Ce nom n\'existe pas dans la liste. Vérifie l\'orthographe !');
+        setLoading(false);
+        return;
+      }
+
+      setCurrentUser({
+        id: user.id,
+        name: user.name,
+        hasDrawn: user.has_drawn
+      });
+      setLoading(false);
+
+    } catch (error) {
+      console.error('Erreur lors de la recherche du participant:', error);
+      setError('Une erreur est survenue. Contacte l\'admin !');
+      setLoading(false);
     }
-
-    const participants = JSON.parse(savedParticipants);
-    const assignments = JSON.parse(savedAssignments);
-
-    // Find user by name (case insensitive)
-    const user = participants.find(
-      p => p.name.toLowerCase().trim() === userName.toLowerCase().trim()
-    );
-
-    if (!user) {
-      setError('Ce nom n\'existe pas dans la liste. Vérifie l\'orthographe !');
-      return;
-    }
-
-    setCurrentUser(user);
   };
 
-  const handleReveal = () => {
+  const handleReveal = async () => {
     if (!currentUser) return;
 
-    // Get assigned person
-    const savedAssignments = localStorage.getItem('secretSantaAssignments');
-    const savedParticipants = localStorage.getItem('secretSantaParticipants');
+    setLoading(true);
 
-    const assignments = JSON.parse(savedAssignments);
-    const participants = JSON.parse(savedParticipants);
+    try {
+      // Charger les assignations et participants
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('assignments')
+        .select('*');
 
-    const assignedId = assignments[currentUser.id];
-    const assignedPerson = participants.find(p => p.id === assignedId);
+      if (assignmentsError) throw assignmentsError;
 
-    if (!assignedPerson) {
+      const { data: participants, error: participantsError } = await supabase
+        .from('participants')
+        .select('*');
+
+      if (participantsError) throw participantsError;
+
+      // Trouver l'assignation pour cet utilisateur
+      const assignment = assignments.find(a => a.giver_id === currentUser.id);
+
+      if (!assignment) {
+        setError('Une erreur est survenue. Contacte l\'admin !');
+        setLoading(false);
+        return;
+      }
+
+      // Trouver la personne assignée
+      const assignedPerson = participants.find(p => p.id === assignment.receiver_id);
+
+      if (!assignedPerson) {
+        setError('Une erreur est survenue. Contacte l\'admin !');
+        setLoading(false);
+        return;
+      }
+
+      // Marquer l'utilisateur comme ayant tiré
+      const { error: updateError } = await supabase
+        .from('participants')
+        .update({ has_drawn: true })
+        .eq('id', currentUser.id);
+
+      if (updateError) throw updateError;
+
+      setCurrentUser({ ...currentUser, assignedTo: assignedPerson.name });
+      setRevealed(true);
+      setLoading(false);
+
+    } catch (error) {
+      console.error('Erreur lors de la révélation:', error);
       setError('Une erreur est survenue. Contacte l\'admin !');
-      return;
+      setLoading(false);
     }
-
-    // Mark user as having drawn
-    const updatedParticipants = participants.map(p =>
-      p.id === currentUser.id ? { ...p, hasDrawn: true } : p
-    );
-    localStorage.setItem('secretSantaParticipants', JSON.stringify(updatedParticipants));
-
-    setCurrentUser({ ...currentUser, assignedTo: assignedPerson.name });
-    setRevealed(true);
   };
 
   return (
@@ -81,16 +133,18 @@ const RevealPage = () => {
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleNameSubmit()}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-red-500 focus:outline-none mb-4 text-center text-lg"
+              disabled={loading}
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-red-500 focus:outline-none mb-4 text-center text-lg disabled:opacity-50"
             />
             {error && (
               <p className="text-red-500 text-sm text-center mb-4">{error}</p>
             )}
             <button
               onClick={handleNameSubmit}
-              className="w-full bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold py-4 rounded-full text-lg hover:shadow-lg transition-all duration-300 hover:scale-105"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold py-4 rounded-full text-lg hover:shadow-lg transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
             >
-              Continuer
+              {loading ? 'Chargement...' : 'Continuer'}
             </button>
           </>
         ) : !revealed ? (
@@ -108,10 +162,14 @@ const RevealPage = () => {
             </p>
             <button
               onClick={handleReveal}
-              className="w-full bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold py-4 rounded-full text-lg hover:shadow-lg transition-all duration-300 hover:scale-105"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold py-4 rounded-full text-lg hover:shadow-lg transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
             >
-              Tirer un nom ✨
+              {loading ? 'Chargement...' : 'Tirer un nom ✨'}
             </button>
+            {error && (
+              <p className="text-red-500 text-sm text-center mt-4">{error}</p>
+            )}
           </>
         ) : (
           <div className="text-center">
