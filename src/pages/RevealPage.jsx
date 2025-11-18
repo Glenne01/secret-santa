@@ -158,7 +158,7 @@ const RevealPage = () => {
               Es-tu prêt(e) à découvrir à qui tu vas devoir offrir un cadeau ?
             </p>
             <p className="text-center text-gray-500 mb-8 text-sm">
-              Budget minimum : 15€
+              Budget minimum : 10€
             </p>
             <button
               onClick={handleReveal}
